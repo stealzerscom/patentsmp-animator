@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PatentSMP Animator</title>
+<meta name="description" content="Animate Minecraft player poses and block rigs in your browser, then load them into PatentSMP with one command.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%2316181d'/%3E%3Cpath d='M12 5l6 7-6 7-6-7z' fill='%237c8cff'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/app.css">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/":"./vendor/"}}</script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo"></span><span>PatentSMP <b>Animator</b></span></div>
+  <div class="project">
+    <button class="chip" id="projectBtn" title="Your projects"><span id="kindDot" class="dot"></span><span id="projectName">project</span><span class="caret"></span></button>
+    <span class="saved" id="savedState">Saved</span>
+  </div>
+  <div class="actions">
+    <button class="btn ghost" id="undoBtn" data-tip="Undo (Ctrl+Z)"></button>
+    <button class="btn ghost" id="redoBtn" data-tip="Redo (Ctrl+Y)"></button>
+    <span class="sep"></span>
+    <button class="btn" id="newBtn">New</button>
+    <button class="btn" id="openBtn">Open</button>
+    <button class="btn" id="pasteBtn">Paste code</button>
+    <button class="btn primary" id="exportBtn">Send to Minecraft</button>
+    <button class="btn ghost icon-only" id="helpBtn" data-tip="Shortcuts and help (?)"></button>
+  </div>
+</header>
+<main class="workspace">
+  <aside class="panel left">
+    <section>
+      <div class="ph"><span>Outliner</span><button class="mini" id="addPartBtn" data-tip="Add a part">Add part</button></div>
+      <ul class="outliner" id="outliner"></ul>
+    </section>
+    <section id="skinPanel">
+      <div class="ph"><span>Skin</span></div>
+      <div class="skin-row"><canvas id="skinFace" width="8" height="8"></canvas>
+        <input id="skinName" placeholder="Minecraft username" spellcheck="false" autocomplete="off"><button class="mini" id="skinLoad">Load</button></div>
+      <div class="field-row"><label>Arms</label>
+        <div class="seg" id="armSeg"><button data-v="auto">Auto</button><button data-v="classic">Classic</button><button data-v="slim">Slim</button></div></div>
+      <p class="note" id="skinNote">Default Steve skin.</p>
+    </section>
+    <section class="grow">
+      <div class="ph"><span>About this mode</span></div>
+      <p class="note" id="modeNote"></p>
+    </section>
+  </aside>
+  <section class="viewport" id="viewport">
+    <div class="vp-tools left-tools">
+      <div class="seg" id="gizmoSeg">
+        <button data-v="translate" data-tip="Move (W)"></button>
+        <button data-v="rotate" data-tip="Rotate (E)"></button>
+        <button data-v="scale" data-tip="Scale (R)"></button>
+      </div>
+      <div class="seg" id="spaceSeg"><button data-v="local" data-tip="Gizmo follows the part">Local</button><button data-v="world" data-tip="Gizmo aligned to the world">World</button></div>
+    </div>
+    <div class="vp-tools right-tools">
+      <div class="seg" id="viewSeg"><button data-v="front">Front</button><button data-v="right">Side</button><button data-v="top">Top</button><button data-v="persp">3/4</button></div>
+      <button class="toggle" id="onionBtn" data-tip="Ghosts of the previous and next keyframe (O)">Onion skin</button>
+    </div>
+    <div class="vp-hint" id="vpHint">Click a limb to select it · drag to orbit · right-drag to pan · scroll to zoom</div>
+  </section>
+  <aside class="panel right" id="inspector"></aside>
+  <section class="timeline" id="timeline">
+    <div class="tl-bar">
+      <div class="transport">
+        <button class="btn ghost icon-only" id="startBtn" data-tip="Start (Home)"></button>
+        <button class="btn ghost icon-only" id="prevKeyBtn" data-tip="Previous keyframe (Shift+←)"></button>
+        <button class="play" id="playBtn" data-tip="Play / pause (Space)"></button>
+        <button class="btn ghost icon-only" id="nextKeyBtn" data-tip="Next keyframe (Shift+→)"></button>
+        <button class="toggle icon" id="loopBtn" data-tip="Loop (L)"></button>
+      </div>
+      <div class="clock"><span id="tickNow">0</span><span class="muted">/ <span id="tickLen">40</span> ticks</span><span class="muted secs" id="secs">0.00 s</span></div>
+      <label class="len">Length <input type="number" id="lengthInput" min="1" step="1"></label>
+      <label class="len">Speed <select id="speedSel"><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select></label>
+      <div class="spacer"></div>
+      <button class="btn" id="keyBtn" data-tip="Add or update a keyframe for the selection (K)">Add keyframe</button>
+      <label class="zoom" data-tip="Zoom the timeline (Ctrl+scroll)"><input type="range" id="zoomInput" min="4" max="48" value="14"></label>
+    </div>
+    <div class="tl-body">
+      <div class="tl-names" id="tlNames"></div>
+      <div class="tl-lanes" id="tlLanes"><div class="tl-inner" id="tlInner"><div class="ruler" id="ruler"></div><div class="rows" id="rows"></div><div class="playhead" id="playhead"><span></span></div></div></div>
+    </div>
+  </section>
+</main>
+<footer class="status"><span id="status">Ready</span><span class="muted">20 ticks = 1 second · works offline once loaded · everything is saved in this browser</span></footer>
+<div class="toast" id="toast"></div>
+<div class="modal-back" id="modalBack"><div class="modal" id="modal"></div></div>
+<div class="menu" id="menu"></div>
+<div class="tip" id="tip"></div>
+<input type="file" id="fileInput" accept=".yml,.yaml,.json,.txt" hidden>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

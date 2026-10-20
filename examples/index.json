@@ -1,0 +1,200 @@
+[
+ {
+  "id": "gojo_awaken",
+  "kind": "body",
+  "length": 64,
+  "file": "body_gojo_awaken.json"
+ },
+ {
+  "id": "gojo_blink",
+  "kind": "body",
+  "length": 16,
+  "file": "body_gojo_blink.json"
+ },
+ {
+  "id": "gojo_blue",
+  "kind": "body",
+  "length": 28,
+  "file": "body_gojo_blue.json"
+ },
+ {
+  "id": "gojo_chant",
+  "kind": "body",
+  "length": 52,
+  "file": "body_gojo_chant.json"
+ },
+ {
+  "id": "gojo_infinity",
+  "kind": "body",
+  "length": 30,
+  "file": "body_gojo_infinity.json"
+ },
+ {
+  "id": "gojo_max_blue",
+  "kind": "body",
+  "length": 48,
+  "file": "body_gojo_max_blue.json"
+ },
+ {
+  "id": "gojo_max_red",
+  "kind": "body",
+  "length": 42,
+  "file": "body_gojo_max_red.json"
+ },
+ {
+  "id": "gojo_nuke",
+  "kind": "body",
+  "length": 60,
+  "file": "body_gojo_nuke.json"
+ },
+ {
+  "id": "gojo_purple",
+  "kind": "body",
+  "length": 44,
+  "file": "body_gojo_purple.json"
+ },
+ {
+  "id": "gojo_rct",
+  "kind": "body",
+  "length": 44,
+  "file": "body_gojo_rct.json"
+ },
+ {
+  "id": "gojo_red",
+  "kind": "body",
+  "length": 25,
+  "file": "body_gojo_red.json"
+ },
+ {
+  "id": "gojo_void",
+  "kind": "body",
+  "length": 50,
+  "file": "body_gojo_void.json"
+ },
+ {
+  "id": "megumi_domain",
+  "kind": "body",
+  "length": 60,
+  "file": "body_megumi_domain.json"
+ },
+ {
+  "id": "megumi_summon",
+  "kind": "body",
+  "length": 44,
+  "file": "body_megumi_summon.json"
+ },
+ {
+  "id": "rct",
+  "kind": "body",
+  "length": 36,
+  "file": "body_rct.json"
+ },
+ {
+  "id": "sukuna_cleave",
+  "kind": "body",
+  "length": 24,
+  "file": "body_sukuna_cleave.json"
+ },
+ {
+  "id": "sukuna_dismantle",
+  "kind": "body",
+  "length": 22,
+  "file": "body_sukuna_dismantle.json"
+ },
+ {
+  "id": "sukuna_fuga",
+  "kind": "body",
+  "length": 56,
+  "file": "body_sukuna_fuga.json"
+ },
+ {
+  "id": "sukuna_rct",
+  "kind": "body",
+  "length": 40,
+  "file": "body_sukuna_rct.json"
+ },
+ {
+  "id": "sukuna_shrine",
+  "kind": "body",
+  "length": 64,
+  "file": "body_sukuna_shrine.json"
+ },
+ {
+  "id": "sukuna_spiderweb",
+  "kind": "body",
+  "length": 35,
+  "file": "body_sukuna_spiderweb.json"
+ },
+ {
+  "id": "sukuna_world_slash",
+  "kind": "body",
+  "length": 58,
+  "file": "body_sukuna_world_slash.json"
+ },
+ {
+  "id": "pachinko_machine",
+  "kind": "rig",
+  "length": 60,
+  "file": "rig_pachinko_machine.json"
+ },
+ {
+  "id": "shutter_doors",
+  "kind": "rig",
+  "length": 34,
+  "file": "rig_shutter_doors.json"
+ },
+ {
+  "id": "train",
+  "kind": "rig",
+  "length": 56,
+  "file": "rig_train.json"
+ },
+ {
+  "id": "v6_sukuna_crosscut_blades",
+  "kind": "rig",
+  "length": 20,
+  "file": "rig_v6_sukuna_crosscut_blades.json"
+ },
+ {
+  "id": "v6_sukuna_fuga_bow",
+  "kind": "rig",
+  "length": 34,
+  "file": "rig_v6_sukuna_fuga_bow.json"
+ },
+ {
+  "id": "v6_sukuna_shrine_gate",
+  "kind": "rig",
+  "length": 54,
+  "file": "rig_v6_sukuna_shrine_gate.json"
+ },
+ {
+  "id": "v6_yuji_blood_lance",
+  "kind": "rig",
+  "length": 16,
+  "file": "rig_v6_yuji_blood_lance.json"
+ },
+ {
+  "id": "v6_yuji_divergent_gauntlet",
+  "kind": "rig",
+  "length": 18,
+  "file": "rig_v6_yuji_divergent_gauntlet.json"
+ },
+ {
+  "id": "v6_yuji_supernova_orbit",
+  "kind": "rig",
+  "length": 24,
+  "file": "rig_v6_yuji_supernova_orbit.json"
+ },
+ {
+  "id": "void_shatter",
+  "kind": "rig",
+  "length": 32,
+  "file": "rig_void_shatter.json"
+ },
+ {
+  "id": "yuji_manji",
+  "kind": "rig",
+  "length": 16,
+  "file": "rig_yuji_manji.json"
+ }
+]
