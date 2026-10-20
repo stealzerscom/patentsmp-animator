@@ -702,7 +702,7 @@ function openProject(p) {
   P = p; store.projects[P.id] = P; store.current = P.id;
   sel = body() ? 'arm_r' : (P.tracks[0] && P.tracks[0].name); selKeys.clear(); tick = 0;
   undoStack.length = 0; redoStack.length = 0; updateUndo();
-  rebuildModel(); stage.view('persp', P.kind); changed(); renderTitle(); save();
+  rebuildModel(); stage.view('persp', P.kind); if (!body()) setTimeout(() => stage.frame(null), 400); changed(); renderTitle(); save();
 }
 function renderTitle() {
   $('#projectName').textContent = P.id; $('#kindDot').className = 'dot' + (body() ? '' : ' rig');
