@@ -22,6 +22,8 @@ let tick = 0, playing = false, playStart = 0, playFrom = 0, speed = 1;
 let sel = null;            // selected track name
 let selKeys = new Set();   // `${track}@${t}`
 let clipboard = null;
+let selProp = null;        // {track, ch, t}: a stepped property key
+let selEvent = -1;         // index into P.events
 const undoStack = [], redoStack = [];
 let skin = null, stage, ghostModels = [], dragSnap = false;
 
@@ -63,11 +65,16 @@ function restore(json) {
   P = n; if (sel && !T(sel)) sel = null; selKeys.clear(); tick = Math.min(tick, P.length);
   updateUndo(); changed(true); renderTitle();
 }
-function limitFor(name, ch) {
+function limitFor(name, ch, i) {
   if (!body()) return ch === 'pos' ? M.LIMITS.rig.pos : ch === 'rot' ? M.LIMITS.rig.rot : M.LIMITS.rig.scale;
-  return ch === 'pos' ? M.LIMITS.body.pos : name === 'root' ? M.LIMITS.body.yaw : M.LIMITS.body.rot;
+  if (ch === 'pos') return M.LIMITS.body.pos;
+  if (ch === 'scale') return name === 'root' ? M.LIMITS.body.rootScale[1] : M.LIMITS.body.scale;
+  return name === 'root' ? (i === 1 ? M.LIMITS.body.yaw : M.LIMITS.body.tilt) : M.LIMITS.body.rot;
 }
-function clampCh(name, ch, v) { const L = limitFor(name, ch); return Math.max(ch === 'scale' ? 0 : -L, Math.min(L, v)); }
+function clampCh(name, ch, v, i) {
+  const L = limitFor(name, ch, i), lo = ch === 'scale' ? (body() && name === 'root' ? M.LIMITS.body.rootScale[0] : 0) : -L;
+  return Math.max(lo, Math.min(L, v));
+}
 
 /** Key at the current tick, created from the current pose if missing (auto-key). */
 function ensureKey(tr, t = itick()) {
@@ -82,8 +89,9 @@ function ensureKey(tr, t = itick()) {
 function setVec(name, ch, vec) {
   const tr = T(name); if (!tr) return;
   const k = ensureKey(tr);
-  k[ch] = vec.map((v, i) => r4(clampCh(name, ch, Number.isFinite(v) ? v : k[ch][i])));
-  if (body() && name === 'root' && ch === 'rot') k.rot = [0, k.rot[1], 0];
+  if (!k.scale) k.scale = [1, 1, 1];
+  k[ch] = vec.map((v, i) => r4(clampCh(name, ch, Number.isFinite(v) ? v : k[ch][i], i)));
+  if (body() && name === 'root' && ch === 'scale') k.scale = [k.scale[0], k.scale[0], k.scale[0]];
 }
 
 // ------------------------------------------------------------------ 3D
@@ -113,11 +121,11 @@ function pose() {
 }
 function attachGizmo() {
   let mode = store.settings.gizmo;
-  if (body() && mode === 'scale') mode = store.settings.gizmo = 'rotate';
+  if (body() && mode === 'scale' && sel === 'root') mode = 'rotate';
   stage.selected = sel;
   stage.gizmo.setSpace(store.settings.space);
   stage.attach(playing ? null : sel, mode);
-  document.querySelectorAll('#gizmoSeg button').forEach(b => { b.classList.toggle('on', b.dataset.v === mode); b.disabled = b.dataset.v === 'scale' && body(); });
+  document.querySelectorAll('#gizmoSeg button').forEach(b => { b.classList.toggle('on', b.dataset.v === mode); b.disabled = b.dataset.v === 'scale' && body() && sel === 'root'; });
   document.querySelectorAll('#spaceSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === store.settings.space));
 }
 
@@ -139,9 +147,10 @@ function gizmoChanged(obj) {
   const tr = T(sel), cur = M.sample(tr, itick(), P.kind), mode = stage.gizmo.mode;
   if (body()) {
     if (sel === 'root') {
-      if (mode === 'rotate') setVec('root', 'rot', [0, r2(-nearEuler(obj.quaternion, 'XYZ', [0, -cur.rot[1], 0])[1]), 0]);
+      if (mode === 'rotate') setVec('root', 'rot', [cur.rot[0], r2(-nearEuler(obj.quaternion, 'XYZ', [0, -cur.rot[1], 0])[1]), cur.rot[2]]);
       else setVec('root', 'pos', obj.position.toArray());
     } else if (mode === 'rotate') setVec(sel, 'rot', nearEuler(obj.quaternion, 'XYZ', cur.rot));
+    else if (mode === 'scale') setVec(sel, 'scale', obj.scale.toArray());
     else { const p = M.PIVOTS[sel]; setVec(sel, 'pos', [obj.position.x - p[0], obj.position.y - p[1], obj.position.z - p[2]]); }
   } else {
     if (mode === 'rotate') setVec(sel, 'rot', nearEuler(obj.quaternion, 'YXZ', cur.rot));
@@ -228,9 +237,9 @@ function duplicatePart(name) {
 }
 
 // ------------------------------------------------------------------ inspector
-function curve(e) {
+function curve(e, bz) {
   let d = '';
-  for (let i = 0; i <= 24; i++) { const x = i / 24, y = M.ease(e, x); d += (i ? 'L' : 'M') + (2 + x * 40).toFixed(1) + ' ' + (25 - y * 22).toFixed(1); }
+  for (let i = 0; i <= 24; i++) { const x = i / 24, y = M.ease(e, x, bz); d += (i ? 'L' : 'M') + (2 + x * 40).toFixed(1) + ' ' + (25 - y * 22).toFixed(1); }
   return `<svg class="curve" viewBox="0 0 44 28"><rect x="0" y="0" width="44" height="28" rx="5"/><path d="${d}"/></svg>`;
 }
 const fmt = (v, ch) => String(ch === 'rot' ? r2(v) : Math.abs(v) >= 100 ? r2(v) : r4(v));
@@ -248,17 +257,18 @@ function renderInspector() {
     const label = body() ? TRACK_LABEL[sel] : sel;
     html += `<section><div class="insp-head"><h3>${esc(label)}</h3>${k ? '<span class="badge key">Keyframe</span>' : '<span class="badge">Between keys</span>'}</div>`;
     if (body() && sel === 'root') {
-      html += vecRow('Offset', 'pos', s.pos, 0.0625) + vecRow('Turn', 'rot', [null, s.rot[1], null], 5);
+      html += vecRow('Offset', 'pos', s.pos, 0.0625) + vecRow('Tilt/turn', 'rot', s.rot, 5) + vecRow('Body scale', 'scale', [s.scale[0], null, null], 0.05);
+      html += `<p class="note">X tilts forward/back, Y turns, Z leans sideways, all around the feet. Body scale resizes the whole body.</p>`;
     } else {
-      html += vecRow(body() ? 'Offset' : 'Position', 'pos', s.pos, 0.0625) + vecRow('Rotation', 'rot', s.rot, 5);
-      if (!body()) html += vecRow('Scale', 'scale', s.scale, 0.05);
+      html += vecRow(body() ? 'Offset' : 'Position', 'pos', s.pos, 0.0625) + vecRow('Rotation', 'rot', s.rot, 5) + vecRow('Scale', 'scale', s.scale, 0.05);
     }
-    const eases = body() ? M.BODY_EASES : M.RIG_EASES;
     html += `<div class="keybox">`;
-    if (k) html += `<div class="row"><span>Ease in</span><select id="easeSel">${eases.map(e => `<option ${e === k.ease ? 'selected' : ''}>${e}</option>`).join('')}</select>${curve(k.ease)}</div>
+    if (k) html += `<div class="row"><span>Ease in</span>${easeSelect('easeSel', k.ease)}${curve(k.ease, k.bezier)}</div>
+      ${k.ease === 'bezier' ? `<div class="row bez"><span>Curve</span>${(k.bezier || [0.42, 0, 0.58, 1]).map((v, i) => `<input type="number" step="0.05" data-bz="${i}" value="${v}" title="${['x1', 'y1', 'x2', 'y2'][i]}">`).join('')}</div>` : ''}
       <div class="row"><span>Tick</span><span style="width:auto;color:var(--text);font-family:var(--mono)">${t}</span><span class="spacer"></span><button class="mini" id="delKeyBtn">Delete key</button></div>`;
     else html += `<div class="empty">No keyframe on tick ${t}. Changing a value adds one here.</div><div><button class="mini" id="addKeyHere">Add keyframe</button></div>`;
     html += `</div>`;
+    html += channelPanel(tr, t);
     if (body()) html += `<div class="btn-row"><button class="btn" id="mirrorBtn" data-tip="Copy this pose to the other side (M)">${icon('flip-vertical')}Mirror</button><button class="btn" id="resetBtn" data-tip="Back to the rest pose on this tick (0)">${icon('refresh')}Reset</button></div>`;
     html += `</section>`;
     if (!body()) {
@@ -272,6 +282,7 @@ function renderInspector() {
       </div><p class="note" id="texNote"></p></section>`;
     }
   } else html += `<section><div class="empty">Select a ${body() ? 'limb' : 'part'} in the viewport or the outliner to pose it.</div></section>`;
+  html += eventPanel();
   html += `<section><div class="ph"><span>Animation</span></div><div class="form">
     <label>Name</label><input id="aName" value="${esc(P.id)}" spellcheck="false" title="a-z, 0-9 and _ only; this is the name in game">
     <label>Type</label><span class="muted">${body() ? 'Body clip (player pose)' : 'Block rig (effect)'}</span>
@@ -296,6 +307,7 @@ function wireInspector() {
       inp.onchange = () => {
         const s = M.sample(T(sel), itick(), P.kind)[ch].slice();
         s[+inp.dataset.i] = Number(inp.value);
+        if (body() && sel === 'root' && ch === 'scale') s[1] = s[2] = s[0];
         commit(() => setVec(sel, ch, s));
       };
       inp.onkeydown = e => { if (e.key === 'Enter') inp.blur(); };
@@ -317,7 +329,12 @@ function wireInspector() {
     });
   });
   const on = (id, ev, fn) => { const n = el.querySelector(id); if (n) n[ev] = fn; };
-  on('#easeSel', 'onchange', e => commit(() => { M.keyAt(T(sel), itick()).ease = e.target.value; }));
+  on('#easeSel', 'onchange', e => commit(() => { const k = M.keyAt(T(sel), itick()); k.ease = e.target.value; if (k.ease === 'bezier' && !k.bezier) k.bezier = [0.42, 0, 0.58, 1]; if (k.ease !== 'bezier') delete k.bezier; }));
+  el.querySelectorAll('[data-bz]').forEach(inp => inp.onchange = () => commit(() => {
+    const k = M.keyAt(T(sel), itick()), b = (k.bezier || [0.42, 0, 0.58, 1]).slice(), i = +inp.dataset.bz;
+    b[i] = i % 2 === 0 ? Math.max(0, Math.min(1, +inp.value)) : Math.max(-2, Math.min(3, +inp.value)); k.bezier = b.map(r4);
+  }));
+  wireChannels(el); wireEvents(el);
   on('#delKeyBtn', 'onclick', () => deleteKeys([[sel, itick()]]));
   on('#addKeyHere', 'onclick', () => addKey(false));
   on('#mirrorBtn', 'onclick', mirror);
@@ -426,17 +443,47 @@ function renderTimeline() {
   const W = (P.length + 1) * ppt() + 40;
   inner.style.width = Math.max(W, $('#tlLanes').clientWidth) + 'px';
   names.innerHTML = ''; rows.innerHTML = '';
+  // Events row (sounds and particles on the timeline)
+  {
+    const n = h('div', { class: 'ev-name' }, icon('music') + '<span>Events</span>');
+    n.onclick = () => { selEvent = -1; renderInspector(); };
+    names.appendChild(n);
+    const r = h('div', { class: 'row events' }); r.dataset.events = '1';
+    const end = h('div', { class: 'end' }); end.style.left = (P.length * ppt() + 6) + 'px'; r.appendChild(end);
+    (P.events || []).forEach((e, i) => {
+      const d = h('div', { class: 'ek ' + (e.sound ? 'snd' : 'ptc') + (i === selEvent ? ' sel' : ''), 'data-tip': `tick ${e.t} · ${[e.sound, e.particle].filter(Boolean).join(' + ')}` });
+      d.style.left = (e.t * ppt() + 6) + 'px'; d.dataset.i = i; r.appendChild(d);
+    });
+    rows.appendChild(r);
+  }
   for (const t of P.tracks) {
     const n = h('div', { class: t.name === sel ? 'sel' : '' }, (body() ? icon(TRACK_ICON[t.name] || 'box') : '') + `<span>${esc(body() ? TRACK_LABEL[t.name] : t.name)}</span>`);
     n.onclick = () => select(t.name); names.appendChild(n);
     const r = h('div', { class: 'row' + (t.name === sel ? ' sel' : '') }); r.dataset.track = t.name;
     const end = h('div', { class: 'end' }); end.style.left = (P.length * ppt() + 6) + 'px'; r.appendChild(end);
     for (const k of t.keys) {
-      const d = h('div', { class: `kf ease-${k.ease}` + (selKeys.has(t.name + '@' + k.t) ? ' sel' : ''), 'data-tip': `${body() ? TRACK_LABEL[t.name] : t.name} · tick ${k.t} · ${k.ease}` });
+      const d = h('div', { class: `kf ease-${k.ease} fam-${M.easeFamily(k.ease)}` + (selKeys.has(t.name + '@' + k.t) ? ' sel' : ''), 'data-tip': `${body() ? TRACK_LABEL[t.name] : t.name} · tick ${k.t} · ${k.ease}` });
       d.style.left = (k.t * ppt() + 6) + 'px'; d.dataset.t = k.t; d.dataset.track = t.name;
       r.appendChild(d);
     }
     rows.appendChild(r);
+    for (const ch of channelsFor(t)) {
+      const list = M.channel(t, ch);
+      if (!list.length && t.name !== sel) continue;
+      const n = h('div', { class: 'sub' + (t.name === sel ? ' sel' : '') }, `<span>${esc(M.CHANNELS[ch].label)}</span>`);
+      n.onclick = () => select(t.name); names.appendChild(n);
+      const sr = h('div', { class: 'row sub ch-' + ch }); sr.dataset.track = t.name; sr.dataset.ch = ch;
+      const end2 = h('div', { class: 'end' }); end2.style.left = (P.length * ppt() + 6) + 'px'; sr.appendChild(end2);
+      for (const c of list) {
+        const on = selProp && selProp.track === t.name && selProp.ch === ch && selProp.t === c.t;
+        const d = h('div', { class: `pk ch-${ch}` + (ch === 'visible' && c.v === false ? ' off' : '') + (on ? ' sel' : ''), 'data-tip': `${M.CHANNELS[ch].label} · tick ${c.t} · ${chanText(ch, c.v)}` });
+        if (ch === 'glow' && c.v !== 'off') d.style.background = c.v;
+        if (ch === 'block' || ch === 'item') d.style.background = '#' + fallbackColor(String(c.v)).toString(16).padStart(6, '0');
+        d.style.left = (c.t * ppt() + 6) + 'px'; d.dataset.t = c.t; d.dataset.track = t.name; d.dataset.ch = ch;
+        sr.appendChild(d);
+      }
+      rows.appendChild(sr);
+    }
   }
   // ruler
   let html = '';
@@ -460,8 +507,11 @@ function wireTimeline() {
   lanes.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
     const kf = e.target.closest('.kf');
-    if (kf) return dragKeys(e, kf);
+    if (kf) { selProp = null; selEvent = -1; return dragKeys(e, kf); }
+    const pk = e.target.closest('.pk, .ek');
+    if (pk) return dragOther(e, pk);
     const row = e.target.closest('.row');
+    if (row && (row.dataset.events || row.dataset.ch)) { if (row.dataset.track && row.dataset.track !== sel) select(row.dataset.track); setTick(tickAt(e)); return; }
     if (row && !e.shiftKey && !e.ctrlKey) selKeys.clear();
     if (row && row.dataset.track !== sel) select(row.dataset.track);
     setTick(tickAt(e)); renderTimeline();
@@ -471,20 +521,28 @@ function wireTimeline() {
   });
   lanes.addEventListener('dblclick', e => {
     const row = e.target.closest('.row');
-    if (!row || e.target.closest('.kf')) return;
+    if (!row || e.target.closest('.kf, .pk, .ek')) return;
+    if (row.dataset.events) { setTick(tickAt(e)); return addEvent('sound'); }
+    if (row.dataset.ch) { setTick(tickAt(e)); return addChannelKey(row.dataset.track, row.dataset.ch); }
     const t = tickAt(e); setTick(t); select(row.dataset.track); addKey(false);
   });
   lanes.addEventListener('contextmenu', e => {
+    const ok = e.target.closest('.pk, .ek');
+    if (ok) {
+      e.preventDefault();
+      return menu(e.clientX, e.clientY, [{ text: 'Delete key', icon: 'trash', run: () => ok.classList.contains('ek') ? deleteEvent(+ok.dataset.i) : deleteChannel(ok.dataset.track, ok.dataset.ch, +ok.dataset.t) }]);
+    }
     const kf = e.target.closest('.kf');
     if (!kf) return;
     e.preventDefault();
     const id = kf.dataset.track + '@' + kf.dataset.t;
     if (!selKeys.has(id)) { selKeys.clear(); selKeys.add(id); renderTimeline(); }
-    const list = selectedKeyList(), eases = body() ? M.BODY_EASES : M.RIG_EASES;
+    const list = selectedKeyList();
     const cur = M.keyAt(T(kf.dataset.track), +kf.dataset.t).ease;
+    const quick = body() ? ['linear', 'inout', 'sine_in_out', 'quad_out', 'back_out', 'elastic_out', 'bounce_out', 'step', 'instant'] : ['linear', 'in_out', 'sine_in_out', 'quad_out', 'back', 'elastic', 'bounce', 'step', 'instant'];
     menu(e.clientX, e.clientY, [
-      { label: 'Ease into this key' },
-      ...eases.map(x => ({ text: x, on: x === cur, run: () => commit(() => list.forEach(([n, t]) => M.keyAt(T(n), t).ease = x)) })),
+      { label: 'Ease into this key (all curves in the panel)' },
+      ...quick.map(x => ({ text: x, on: x === cur, run: () => commit(() => list.forEach(([n, t]) => { const k = M.keyAt(T(n), t); k.ease = x; delete k.bezier; })) })),
       '-',
       { text: 'Copy', icon: 'copy', run: copy },
       { text: `Delete ${list.length > 1 ? list.length + ' keys' : 'key'}`, icon: 'trash', run: () => deleteKeys(list) },
@@ -642,7 +700,8 @@ async function exportDialog() {
   if (parts.length === 1) {
     html += `<div class="codebox"><textarea id="codeOut" readonly spellcheck="false">${esc(code)}</textarea></div>
       <div class="code-meta"><span>${kindTxt} <b>${esc(P.id)}</b> · ${P.length} ticks</span><span>${code.length.toLocaleString()} characters</span></div>`;
-    if (quick.length <= 256) html += `<p>Short enough to type as one chat command too: <button class="mini" id="copyCmd">Copy command</button></p>`;
+    if (quick.length <= M.CHAT_LIMIT) html += `<p>Short enough to type as one chat command too: <button class="mini" id="copyCmd">Copy command</button></p>`;
+    else html += `<p class="note">Too long to type in chat: Minecraft cuts chat at ${M.CHAT_LIMIT} characters, so <code>/animator import &lt;code&gt;</code> would arrive cut off. Type just <code>/animator import</code> and paste into the box.</p>`;
   } else {
     html += `<p>This animation is big, so its code comes in ${parts.length} parts. Paste part 1 into the dialog; the game then asks for the next part.</p><div class="list">${parts.map((p, i) => `<div class="item"><span class="nm">Part ${i + 1} of ${parts.length}</span><span class="meta">${p.length.toLocaleString()} characters</span><button class="btn" data-part="${i}" style="opacity:1">${icon('copy')}Copy</button></div>`).join('')}</div>`;
   }
@@ -699,7 +758,7 @@ function helpDialog() {
 // ------------------------------------------------------------------ projects + skin
 function openProject(p) {
   if (playing) stop();
-  P = p; store.projects[P.id] = P; store.current = P.id;
+  P = M.normalizeChannels(p); selProp = null; selEvent = -1; store.projects[P.id] = P; store.current = P.id;
   sel = body() ? 'arm_r' : (P.tracks[0] && P.tracks[0].name); selKeys.clear(); tick = 0;
   undoStack.length = 0; redoStack.length = 0; updateUndo();
   rebuildModel(); stage.view('persp', P.kind); if (!body()) setTimeout(() => stage.frame(null), 400); changed(); renderTitle(); save();
@@ -751,7 +810,7 @@ function keys(e) {
     case 'ArrowRight': return go(() => e.shiftKey ? jumpKey(1) : setTick(itick() + 1));
     case 'Home': return go(() => setTick(0));
     case 'End': return go(() => setTick(P.length));
-    case 'Delete': case 'Backspace': return go(() => deleteKeys(selectedKeyList().length ? selectedKeyList() : sel ? [[sel, itick()]] : []));
+    case 'Delete': case 'Backspace': if (selProp) return go(() => deleteChannel(selProp.track, selProp.ch, selProp.t)); if (selEvent >= 0) return go(() => deleteEvent(selEvent)); return go(() => deleteKeys(selectedKeyList().length ? selectedKeyList() : sel ? [[sel, itick()]] : []));
     case 'Escape': return go(() => { selKeys.clear(); select(null); });
     case 'Tab': return go(() => { const i = P.tracks.findIndex(t => t.name === sel); select(P.tracks[(i + (e.shiftKey ? -1 + P.tracks.length : 1)) % P.tracks.length].name); });
     case '?': return go(helpDialog);
@@ -773,11 +832,163 @@ function keys(e) {
   }
 }
 function setGizmo(m) {
-  if (m === 'scale' && body()) return toast('Body bones only move and rotate', true);
+  if (m === 'scale' && body() && sel === 'root') return toast('Scale the whole body with the Body scale field', true);
   store.settings.gizmo = m; attachGizmo(); save();
 }
 function toggleOnion() { store.settings.onion = !store.settings.onion; $('#onionBtn').classList.toggle('on', store.settings.onion); rebuildGhosts(); pose(); save(); }
 function toggleLoop() { store.settings.loop = !store.settings.loop; $('#loopBtn').classList.toggle('on', store.settings.loop); save(); }
+
+// ------------------------------------------------------------------ v2: easing picker, property channels, events
+function easeSelect(id, cur) {
+  const list = body() ? M.BODY_EASES : M.RIG_EASES;
+  const legacy = list.filter(e => !e.includes('_') && !['hold', 'instant', 'bezier'].includes(e));
+  const groups = [['Basic', legacy], ...M.FAMILIES.map(f => [f[0].toUpperCase() + f.slice(1), list.filter(e => e.startsWith(f + '_'))]), ['Hold / jump / custom', ['hold', 'instant', 'bezier']]];
+  return `<select id="${id}">${groups.map(([g, es]) => `<optgroup label="${g}">${es.map(e => `<option ${e === cur ? 'selected' : ''}>${e}</option>`).join('')}</optgroup>`).join('')}</select>`;
+}
+function channelsFor(tr) {
+  return Object.keys(M.CHANNELS).filter(ch => {
+    const c = M.CHANNELS[ch];
+    if (body()) return c.body && tr.name !== 'root';
+    return c.rig && (!c.type || c.type === tr.type);
+  });
+}
+function chanText(ch, v) {
+  if (v === undefined) return 'not set';
+  if (ch === 'visible') return v ? 'shown' : 'hidden';
+  if (ch === 'brightness') return v < 0 ? 'world light' : String(v);
+  return String(v);
+}
+function chanDefault(tr, ch) {
+  const cur = M.channelAt(tr, ch, itick());
+  switch (ch) {
+    case 'visible': return cur === undefined ? false : !cur;
+    case 'brightness': return cur === undefined ? 15 : cur;
+    case 'glow': return cur === undefined || cur === 'off' ? '#7c8cff' : 'off';
+    case 'block': case 'item': return cur || tr.material || 'stone';
+    case 'text': return cur ?? (tr.props.text || 'text');
+  }
+}
+function channelPanel(tr, t) {
+  const chans = channelsFor(tr);
+  if (!chans.length) return '';
+  let html = `<div class="chanbox"><div class="ph"><span>Property keys</span><span class="muted">hold until the next key</span></div>`;
+  for (const ch of chans) {
+    const here = M.channel(tr, ch).find(c => c.t === t), v = M.channelAt(tr, ch, t);
+    let input;
+    switch (ch) {
+      case 'visible': input = `<select data-cv="${ch}"><option value="1" ${v !== false ? 'selected' : ''}>shown</option><option value="0" ${v === false ? 'selected' : ''}>hidden</option></select>`; break;
+      case 'brightness': input = `<select data-cv="${ch}"><option value="-1">world light</option>${Array.from({ length: 16 }, (_, i) => `<option value="${i}" ${v === i ? 'selected' : ''}>${i}</option>`).join('')}</select>`; break;
+      case 'glow': input = `<input type="color" data-cv="${ch}" value="${typeof v === 'string' && v.startsWith('#') ? v : '#7c8cff'}"><label class="check"><input type="checkbox" data-coff="${ch}" ${v === 'off' || v === undefined ? 'checked' : ''}>off</label>`; break;
+      case 'text': input = `<input data-cv="${ch}" value="${esc(v ?? (tr.props.text || ''))}">`; break;
+      default: input = `<input data-cv="${ch}" list="ids" value="${esc(v ?? tr.material)}" spellcheck="false">`;
+    }
+    html += `<div class="row chan"><span class="cdot ch-${ch}"></span><span>${esc(M.CHANNELS[ch].label)}</span>${input}`
+      + (here ? `<button class="mini" data-cdel="${ch}" data-tip="Delete this key">${icon('trash')}</button>` : `<button class="mini" data-cadd="${ch}" data-tip="Add a key on tick ${t}">${icon('plus')}</button>`) + `</div>`;
+  }
+  if (selProp && selProp.track === tr.name) html += `<p class="note">Selected: ${esc(M.CHANNELS[selProp.ch].label)} key on tick ${selProp.t}. Drag it on the timeline to retime; Delete removes it.</p>`;
+  if (body()) html += `<p class="note">Hidden limbs vanish for everyone watching; brightness overrides the light level on the skin.</p>`;
+  return html + `</div>`;
+}
+function readChan(el, ch) {
+  const inp = el.querySelector(`[data-cv="${ch}"]`);
+  switch (ch) {
+    case 'visible': return inp.value === '1';
+    case 'brightness': return +inp.value;
+    case 'glow': return el.querySelector(`[data-coff="${ch}"]`).checked ? 'off' : inp.value;
+    case 'block': case 'item': return inp.value.trim().toLowerCase().replace('minecraft:', '');
+    default: return inp.value;
+  }
+}
+function wireChannels(el) {
+  if (!sel) return;
+  const tr = T(sel), t = itick();
+  el.querySelectorAll('[data-cadd]').forEach(b => b.onclick = () => { const ch = b.dataset.cadd; commit(() => { M.setChannelKey(tr, ch, t, readChan(el, ch)); selProp = { track: tr.name, ch, t }; }); });
+  el.querySelectorAll('[data-cdel]').forEach(b => b.onclick = () => deleteChannel(tr.name, b.dataset.cdel, t));
+  el.querySelectorAll('[data-cv], [data-coff]').forEach(inp => inp.onchange = () => {
+    const ch = inp.dataset.cv || inp.dataset.coff;
+    if ((ch === 'block' || ch === 'item') && !/^[a-z0-9_]+$/.test(readChan(el, ch))) { toast('Ids look like red_concrete', true); return renderInspector(); }
+    commit(() => { M.setChannelKey(tr, ch, t, readChan(el, ch)); selProp = { track: tr.name, ch, t }; }, ch === 'block' || ch === 'item' || ch === 'text');
+  });
+}
+function addChannelKey(name, ch) {
+  const tr = T(name); if (!tr) return;
+  const t = itick();
+  commit(() => { M.setChannelKey(tr, ch, t, chanDefault(tr, ch)); selProp = { track: name, ch, t }; sel = name; });
+  toast(`${M.CHANNELS[ch].label} key on tick ${t}`);
+}
+function deleteChannel(name, ch, t) {
+  const tr = T(name); if (!tr) return;
+  commit(() => { M.deleteChannelKey(tr, ch, t); selProp = null; });
+  toast('Deleted the ' + M.CHANNELS[ch].label.toLowerCase() + ' key');
+}
+const PARTICLES = ['flame', 'soul_fire_flame', 'end_rod', 'electric_spark', 'crit', 'enchanted_hit', 'portal', 'reverse_portal', 'dust', 'cloud', 'smoke', 'large_smoke', 'explosion', 'sonic_boom', 'sweep_attack', 'glow', 'totem_of_undying', 'witch', 'dragon_breath', 'firework', 'heart', 'note', 'snowflake', 'cherry_leaves'];
+const SOUNDS = ['entity.blaze.shoot', 'entity.ender_dragon.growl', 'entity.warden.sonic_boom', 'entity.lightning_bolt.thunder', 'entity.generic.explode', 'entity.player.attack.sweep', 'entity.illusioner.cast_spell', 'block.beacon.activate', 'block.amethyst_block.chime', 'item.trident.thunder', 'entity.evoker.cast_spell', 'block.respawn_anchor.charge', 'ui.toast.challenge_complete'];
+function eventPanel() {
+  const list = P.events || [];
+  let html = `<section><div class="ph"><span>Events</span><span class="muted">${list.length} on the timeline</span></div>
+    <div class="btn-row"><button class="btn" id="addSound">${icon('music')}Sound here</button><button class="btn" id="addParticle">${icon('sparkles')}Particles here</button></div>`;
+  const e = list[selEvent];
+  if (e) html += `<div class="form evform">
+      <label>Tick</label><input id="evT" type="number" min="0" max="${P.length}" value="${e.t}">
+      <label>Sound</label><input id="evSound" list="sounds" value="${esc(e.sound || '')}" placeholder="none" spellcheck="false">
+      <label>Volume / pitch</label><div class="pair"><input id="evVol" type="number" step="0.1" min="0" max="2" value="${e.volume ?? 1}"><input id="evPitch" type="number" step="0.1" min="0" max="2" value="${e.pitch ?? 1}"></div>
+      <label>Particle</label><input id="evParticle" list="particles" value="${esc(e.particle || '')}" placeholder="none" spellcheck="false">
+      <label>Count / spread</label><div class="pair"><input id="evCount" type="number" min="0" max="32" value="${e.count ?? 10}"><input id="evSpread" type="number" step="0.1" min="0" max="4" value="${e.spread ?? 0.5}"></div>
+      <label>Colour (dust)</label><input id="evColor" type="color" value="${'#' + String(e.color || 'ffffff').replace('#', '')}">
+      <label>At (x y z)</label><div class="pair three">${(e.at || [0, 1, 0]).map((v, i) => `<input type="number" step="0.25" data-at="${i}" value="${v}">`).join('')}</div>
+    </div><div class="btn-row"><button class="btn danger" id="evDel">${icon('trash')}Delete event</button></div>`;
+  else html += `<p class="note">Sounds and particles fire on their tick${body() ? ' at the player (other players hear and see them)' : ''}. Double-click the Events row to add one; click one to edit it.</p>`;
+  return html + `<datalist id="particles">${PARTICLES.map(i => `<option value="${i}">`).join('')}</datalist><datalist id="sounds">${SOUNDS.map(i => `<option value="${i}">`).join('')}</datalist></section>`;
+}
+function addEvent(kind) {
+  const t = itick();
+  const e = kind === 'sound' ? { t, sound: 'entity.blaze.shoot', volume: 1, pitch: 1 } : { t, particle: 'end_rod', count: 12, spread: 0.4, at: [0, 1, 0] };
+  commit(() => { P.events.push(e); P.events.sort((a, b) => a.t - b.t); selEvent = P.events.indexOf(e); selProp = null; });
+}
+function deleteEvent(i) {
+  if (!P.events[i]) return;
+  commit(() => { P.events.splice(i, 1); selEvent = -1; });
+  toast('Deleted the event');
+}
+function wireEvents(el) {
+  const on = (id, fn) => { const n = el.querySelector(id); if (n) n.onclick = fn; };
+  on('#addSound', () => addEvent('sound')); on('#addParticle', () => addEvent('particle')); on('#evDel', () => deleteEvent(selEvent));
+  const e = P.events[selEvent];
+  if (!e) return;
+  const num = (id, lo, hi) => { const v = +el.querySelector(id).value; return Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined; };
+  el.querySelectorAll('.evform input').forEach(inp => inp.onchange = () => commit(() => {
+    e.t = Math.round(num('#evT', 0, P.length));
+    const snd = el.querySelector('#evSound').value.trim().toLowerCase(), pt = el.querySelector('#evParticle').value.trim().toLowerCase();
+    if (snd) { e.sound = snd; e.volume = num('#evVol', 0, 2); e.pitch = num('#evPitch', 0, 2); } else { delete e.sound; delete e.volume; delete e.pitch; }
+    if (pt) { e.particle = pt; e.count = Math.round(num('#evCount', 0, 32)); e.spread = num('#evSpread', 0, 4); e.at = [...el.querySelectorAll('[data-at]')].map(x => r4(+x.value || 0)); if (pt === 'dust') e.color = el.querySelector('#evColor').value; else delete e.color; }
+    else { delete e.particle; delete e.count; delete e.spread; delete e.color; }
+    P.events.sort((a, b) => a.t - b.t); selEvent = P.events.indexOf(e);
+  }));
+}
+/** Drag a property key or an event along its row to retime it. */
+function dragOther(e, el) {
+  const isEv = el.classList.contains('ek'), x0 = e.clientX, t0 = isEv ? P.events[+el.dataset.i].t : +el.dataset.t;
+  if (isEv) { selEvent = +el.dataset.i; selProp = null; }
+  else { selProp = { track: el.dataset.track, ch: el.dataset.ch, t: t0 }; selEvent = -1; if (el.dataset.track !== sel) { sel = el.dataset.track; attachGizmo(); renderOutliner(); } }
+  setTick(t0); renderTimeline(); renderInspector();
+  const node = isEv ? document.querySelector(`.ek[data-i="${selEvent}"]`) : document.querySelector(`.pk[data-track="${CSS.escape(selProp.track)}"][data-ch="${selProp.ch}"][data-t="${t0}"]`);
+  let dt = 0;
+  const mv = ev => { dt = Math.round((ev.clientX - x0) / ppt()); if (node) { node.style.left = ((t0 + dt) * ppt() + 6) + 'px'; node.classList.toggle('ghost', dt !== 0); } };
+  const up = () => {
+    removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+    if (!dt) return;
+    const nt = t0 + dt;
+    if (nt < 0 || nt > P.length) { toast('Keys stay inside the clip', true); return renderTimeline(); }
+    if (isEv) { const ev = P.events[selEvent]; commit(() => { ev.t = nt; P.events.sort((a, b) => a.t - b.t); selEvent = P.events.indexOf(ev); }); }
+    else {
+      const tr = T(selProp.track), list = M.channel(tr, selProp.ch);
+      if (list.some(c => c.t === nt)) { toast('There is already a key there', true); return renderTimeline(); }
+      commit(() => { list.find(c => c.t === t0).t = nt; list.sort((a, b) => a.t - b.t); selProp.t = nt; });
+    }
+    setTick(nt);
+  };
+  addEventListener('pointermove', mv); addEventListener('pointerup', up);
+}
 
 async function init() {
   load();

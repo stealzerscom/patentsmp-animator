@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
 import { TransformControls } from 'three/addons/TransformControls.js';
-import { BONES, PIVOTS, sample } from './model.js';
+import { BONES, PIVOTS, sample, channelAt } from './model.js';
 
 // Body bones = the player-head cube remapped by StealzersCore/pack-src/body_rig.py: vanilla player proportions x 0.9375,
 // pivot at the joint, limb hanging down. Offsets are the thirdperson_righthand translations (item frame x is mirrored).
@@ -124,7 +124,7 @@ export function buildRig(project, ghost) {
     obj.add(mesh);
     root.add(obj); parts[t.name] = obj;
   }
-  return { kind: 'rig', root, parts };
+  return { kind: 'rig', root, parts, ghost: !!ghost };
 }
 
 function partMesh(t) {
@@ -171,16 +171,33 @@ export function poseModel(model, project, tick) {
     const r = sample(tr('root'), tick, 'body');
     model.root.rotation.y = -rad(r.rot[1]);
     model.offset.position.set(...r.pos);
+    // v2: root pitch (X) / roll (Z) and uniform scale about the feet, like ActorEngine.pose
+    model.offset.rotation.set(rad(r.rot[0]), 0, rad(r.rot[2]), 'XYZ');
+    const rs = Math.max(1e-4, r.scale[0]); model.offset.scale.set(rs, rs, rs);
     for (const b of BONES) {
       const k = sample(tr(b), tick, 'body'), g = model.bones[b], p = PIVOTS[b];
       g.position.set(p[0] + k.pos[0], p[1] + k.pos[1], p[2] + k.pos[2]);
       g.rotation.set(rad(k.rot[0]), rad(k.rot[1]), rad(k.rot[2]), 'XYZ');
+      g.scale.set(Math.max(1e-4, k.scale[0]), Math.max(1e-4, k.scale[1]), Math.max(1e-4, k.scale[2]));
+      g.visible = channelAt(tr(b), 'visible', Math.floor(tick)) !== false;
     }
   } else {
     for (const t of project.tracks) {
       const o = model.parts[t.name];
       if (!o) continue;
       const k = sample(t, tick, 'rig');
+      o.visible = channelAt(t, 'visible', tick) !== false;
+      if (!model.ghost && (t.type === 'block' || t.type === 'item' || t.type === 'text')) {
+        // block/item/text swap keys: rebuild the part's mesh when the shown id or text changes
+        const ch = t.type === 'text' ? 'text' : t.type, v = channelAt(t, ch, tick);
+        const want = v !== undefined ? String(v) : t.type === 'text' ? String(t.props.text || '') : t.material;
+        if (o.userData.shown === undefined) o.userData.shown = t.type === 'text' ? String(t.props.text || '') : t.material;
+        if (o.userData.shown !== want) {
+          const m = partMesh(t.type === 'text' ? { ...t, props: { ...t.props, text: want } } : { ...t, material: want });
+          m.userData.track = t.name;
+          o.remove(o.children[0]); o.add(m); o.userData.shown = want;
+        }
+      }
       o.position.set(...k.pos);
       o.rotation.set(rad(k.rot[0]), rad(k.rot[1]), rad(k.rot[2]), 'YXZ');
       o.scale.set(Math.max(1e-4, k.scale[0]), Math.max(1e-4, k.scale[1]), Math.max(1e-4, k.scale[2]));
